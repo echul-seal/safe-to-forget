@@ -16,3 +16,7 @@ Rendered split across two 4-core boxes (the first try OOM-killed 130 encoders on
 
 ## v2
 - Self-review of v1 audio: loud while canisters arrive (rms ~0.18), then the middle 40-70 s sags to rms ~0.02, a hole rather than a silence. The quiet is the point, but it should be inhabited: sea and forest air lifted, a low bowed tone follows the land rising out of the sea, and the drone now breathes with the ice.
+
+v2 film (final): ipfs://bafybeieuwppgcagm33utoucgxv5sbrljmy7u7qwr6klwry54o6uoceybfy
+https://gateway.pinata.cloud/ipfs/bafybeieuwppgcagm33utoucgxv5sbrljmy7u7qwr6klwry54o6uoceybfy
+Middle 40-90 s now sits at rms ~0.05-0.07 instead of ~0.02: quiet, but somebody's still there.
