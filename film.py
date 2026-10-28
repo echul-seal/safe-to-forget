@@ -316,7 +316,7 @@ def _chunk(args):
     a, b, path = args
     p = subprocess.Popen(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24',
                           '-s', '%dx%d' % (W, H), '-r', str(FPS), '-i', '-', '-c:v', 'libx264',
-                          '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p', path], stdin=subprocess.PIPE)
+                          '-threads', '2', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p', path], stdin=subprocess.PIPE)
     for i in range(a, b):
         p.stdin.write(frame(i / FPS).tobytes())
     p.stdin.close(); p.wait()
@@ -335,16 +335,24 @@ if __name__ == '__main__':
             Image.fromarray(frame(float(x))).save('still_%05.1f.png' % float(x))
     elif mode == 'audio':
         write_wav(sys.argv[2])
-    else:
+    elif mode == 'full':
         from multiprocessing import Pool
         out = sys.argv[2]; N = int(DUR * FPS); P = int(os.environ.get('PROCS', 4))
         os.makedirs('frames', exist_ok=True)
-        cuts = np.linspace(0, N, P * 3 + 1).astype(int)
-        jobs = [(cuts[i], cuts[i + 1], 'frames/c%03d.mp4' % i) for i in range(len(cuts) - 1)]
+        NCH = int(os.environ.get('NCHUNK', P * 3))
+        cuts = np.linspace(0, N, NCH + 1).astype(int)
+        jobs = [(cuts[i], cuts[i + 1], 'frames/c%03d.mp4' % i) for i in range(NCH)]
+        part = os.environ.get('PART')
+        k, n = map(int, part.split('/')) if part else (0, 1)
+        jobs = jobs[k * NCH // n:(k + 1) * NCH // n]
         with Pool(P) as pool:
-            pa = pool.apply_async(write_wav, ('score.wav',))
+            pa = pool.apply_async(write_wav, ('score.wav',)) if k == 0 else None
             parts = pool.map(_chunk, jobs)
-            pa.get()
+            if pa: pa.get()
+        if part: print('part done', part); sys.exit(0)
+    if mode == 'mux' or not os.environ.get('PART'):
+        import glob
+        out = sys.argv[2]; parts = sorted(glob.glob('frames/c*.mp4'))
         open('frames/list.txt', 'w').write(''.join("file '%s'\n" % os.path.basename(x) for x in parts))
         subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', 'frames/list.txt',
                         '-i', 'score.wav', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-shortest',
