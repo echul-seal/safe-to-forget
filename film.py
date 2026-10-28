@@ -286,7 +286,8 @@ def score():
     hv = envelope(lambda t: float(heat(elapsed(t)).mean() * (elapsed(t) >= EMPL).mean()), n)
     hv = hv / (hv.max() + 1e-9)
     dr = sum(a * np.sin(2 * np.pi * f * tt + ph) for f, a, ph in ((73.42, .5, 0), (73.6, .4, 1), (110.0, .25, 2), (146.83, .12, 3)))
-    L += 0.16 * hv * dr; R += 0.16 * hv * np.roll(dr, 400)
+    br = 1 - 0.5 * envelope(lambda t: ice(elapsed(t)), n)
+    L += 0.16 * hv * br * dr; R += 0.16 * hv * br * np.roll(dr, 400)
     # machinery hum while the plant exists
     pv = envelope(lambda t: plant(elapsed(t)) * fss(T0 - 3, T0, t), n)
     hum = lowpass_noise(n, 120, 1) * 0.5 + 0.3 * np.sin(2 * np.pi * 50 * tt)
@@ -294,10 +295,13 @@ def score():
     # sea and wind, forest air, then ice that breathes
     sv = envelope(lambda t: fss(-30, 0, rsl(elapsed(t))) * 0.6 + 0.4, n)
     sea = lowpass_noise(n, 500, 2) * (0.6 + 0.4 * np.sin(2 * np.pi * 0.11 * tt))
-    L += 0.05 * sv * sea; R += 0.05 * sv * np.roll(sea, 9000)
+    L += 0.08 * sv * sea; R += 0.08 * sv * np.roll(sea, 9000)
+    uv = envelope(lambda t: fss(T_CLOSE, T_CLOSE + 6, t) * (1 - fss(66, 74, t)), n)
+    rise = sum(a * np.sin(2 * np.pi * f * tt * (1 + 0.002 * np.sin(2 * np.pi * 0.05 * tt))) for f, a in ((55.0, .5), (82.41, .3), (110.0, .15)))
+    L += 0.07 * uv * rise; R += 0.07 * uv * np.roll(rise, 700)
     vv = envelope(lambda t: veg(elapsed(t)) * fss(T_CLOSE, T_CLOSE + 10, t), n)
     air = lowpass_noise(n, 3500, 3, q=1400)
-    L += 0.035 * vv * air; R += 0.035 * vv * np.roll(air, 3000)
+    L += 0.07 * vv * air; R += 0.07 * vv * np.roll(air, 3000)
     iv = envelope(lambda t: ice(elapsed(t)), n)
     wind = lowpass_noise(n, 260, 4, q=180); wind2 = lowpass_noise(n, 260, 5, q=180)
     L += 0.30 * iv ** 1.3 * wind; R += 0.30 * iv ** 1.3 * wind2
