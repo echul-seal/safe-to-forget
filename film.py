@@ -354,7 +354,7 @@ if __name__ == '__main__':
             parts = pool.map(_chunk, jobs)
             if pa: pa.get()
         if part: print('part done', part); sys.exit(0)
-    if mode == 'mux' or not os.environ.get('PART'):
+    if mode == 'mux' or (mode == 'full' and not os.environ.get('PART')):
         import glob
         out = sys.argv[2]; parts = sorted(glob.glob('frames/c*.mp4'))
         open('frames/list.txt', 'w').write(''.join("file '%s'\n" % os.path.basename(x) for x in parts))
