@@ -159,12 +159,13 @@ def render(t):
     col = HUE * I[:, None] * np.array([255, 150, 70], np.float32)
     for k in range(3):
         np.add.at(glow[..., k], (CYI // 4, CXI // 4), col[:, k] * 0.9)
-    glow = gaussian_filter(glow, (2.2, 2.2, 0)) * 3.0 + gaussian_filter(glow, (9, 9, 0)) * 8.0
-    big = np.array(Image.fromarray(np.clip(glow, 0, 255).astype(np.uint8)).resize((W, H), Image.BILINEAR), np.float32)
-    img = img + big
+    glow = gaussian_filter(glow, (1.6, 1.6, 0)) * 1.4 + gaussian_filter(glow, (8, 8, 0)) * 2.2
+    big = np.stack([np.array(Image.fromarray(glow[..., k]).resize((W, H), Image.BILINEAR)) for k in range(3)], -1)
     sharp = np.zeros((H, W, 3), np.float32)
     np.add.at(sharp, (CYI, CXI), col * 0.9)
-    img = img + sharp
+    sharp = np.maximum(sharp, np.roll(sharp, 1, 1) * 0.6)
+    light = big + sharp
+    img = img + 235.0 * (1 - np.exp(-light / 150.0))
     out = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
     d = ImageDraw.Draw(out, 'RGBA')
     if tun > 0.01:
@@ -231,3 +232,120 @@ def frame(t):
 _yy, _xx = np.mgrid[0:H, 0:W]
 VIG = (1 - 0.35 * (((_xx - W / 2) / (W / 2)) ** 2 + ((_yy - H / 2) / (H / 2)) ** 2) ** 1.4)[..., None].astype(np.float32)
 VIG = np.clip(VIG, 0.4, 1)
+
+# ---------------- score ----------------
+SR = 44100
+BOWL = [1.0, 2.71, 5.15, 8.43, 12.1]          # singing-bowl partial ratios
+BAMP = [1.0, 0.55, 0.30, 0.16, 0.08]
+ROOTS = [146.83, 164.81, 196.0, 220.0, 246.94, 293.66, 329.63, 392.0]  # D pentatonic-ish
+
+def bowl(f0, dur=3.2, bright=1.0):
+    n = int(dur * SR); tt = np.arange(n) / SR
+    y = np.zeros(n)
+    for r, a in zip(BOWL, BAMP):
+        f = f0 * r
+        if f > 15000: continue
+        beat = 1 + 0.004 * np.sin(2 * np.pi * (0.7 + r * 0.3) * tt)
+        y += a * bright ** (r - 1) * np.sin(2 * np.pi * f * tt * beat) * np.exp(-tt * (1.1 + 0.55 * r))
+    att = np.minimum(tt / 0.004, 1)
+    return y * att
+
+def lowpass_noise(n, fc, seed, q=None):
+    r = np.random.default_rng(seed)
+    X = np.fft.rfft(r.standard_normal(n)); f = np.fft.rfftfreq(n, 1 / SR)
+    if q is None: X *= 1 / (1 + (f / fc) ** 4)
+    else: X *= np.exp(-0.5 * ((f - fc) / q) ** 2)
+    y = np.fft.irfft(X, n); return y / (np.abs(y).max() + 1e-9)
+
+def envelope(fn, n, step=0.02):
+    ts = np.arange(0, n / SR + step, step)
+    return np.interp(np.arange(n) / SR, ts, [fn(t) for t in ts])
+
+def score():
+    n = int(DUR * SR); L = np.zeros(n); R = np.zeros(n)
+    bank = {}
+    r2 = np.random.default_rng(7)
+    for i in np.argsort(TEMPL):
+        t = TEMPL[i]
+        if t > DUR: continue
+        dens = 1.0 / max(rate(t) / 60.0, 1.0) if False else 1.0
+        k = (CCOL[i] * 3 + CROW[i]) % len(ROOTS)
+        octv = 1 if r2.random() < 0.7 else 2
+        key = (k, octv)
+        if key not in bank: bank[key] = bowl(ROOTS[k] * octv)
+        s = bank[key]
+        lead = 1.0 if t < 12 else max(0.08, (12 / t) ** 2.2)   # thins as density rises
+        a = 0.22 * lead * (0.6 + 0.4 * r2.random())
+        p = CCOL[i] / (NCOL - 1)
+        j = int(t * SR); m = min(len(s), n - j)
+        L[j:j + m] += s[:m] * a * (1 - p) ** 0.5
+        R[j:j + m] += s[:m] * a * p ** 0.5
+    # the drone: the sum of all that heat, decaying
+    tt = np.arange(n) / SR
+    hv = envelope(lambda t: float(heat(elapsed(t)).mean() * (elapsed(t) >= EMPL).mean()), n)
+    hv = hv / (hv.max() + 1e-9)
+    dr = sum(a * np.sin(2 * np.pi * f * tt + ph) for f, a, ph in ((73.42, .5, 0), (73.6, .4, 1), (110.0, .25, 2), (146.83, .12, 3)))
+    L += 0.16 * hv * dr; R += 0.16 * hv * np.roll(dr, 400)
+    # machinery hum while the plant exists
+    pv = envelope(lambda t: plant(elapsed(t)) * fss(T0 - 3, T0, t), n)
+    hum = lowpass_noise(n, 120, 1) * 0.5 + 0.3 * np.sin(2 * np.pi * 50 * tt)
+    L += 0.10 * pv * hum; R += 0.10 * pv * hum
+    # sea and wind, forest air, then ice that breathes
+    sv = envelope(lambda t: fss(-30, 0, rsl(elapsed(t))) * 0.6 + 0.4, n)
+    sea = lowpass_noise(n, 500, 2) * (0.6 + 0.4 * np.sin(2 * np.pi * 0.11 * tt))
+    L += 0.05 * sv * sea; R += 0.05 * sv * np.roll(sea, 9000)
+    vv = envelope(lambda t: veg(elapsed(t)) * fss(T_CLOSE, T_CLOSE + 10, t), n)
+    air = lowpass_noise(n, 3500, 3, q=1400)
+    L += 0.035 * vv * air; R += 0.035 * vv * np.roll(air, 3000)
+    iv = envelope(lambda t: ice(elapsed(t)), n)
+    wind = lowpass_noise(n, 260, 4, q=180); wind2 = lowpass_noise(n, 260, 5, q=180)
+    L += 0.30 * iv ** 1.3 * wind; R += 0.30 * iv ** 1.3 * wind2
+    cv = envelope(lambda t: cold(elapsed(t)) * fss(T_CLOSE + 5, T_CLOSE + 20, t), n)
+    L += 0.05 * cv * np.sin(2 * np.pi * 55 * tt); R += 0.05 * cv * np.sin(2 * np.pi * 55.3 * tt)
+    # last bowl, struck once, after the title of the end
+    s = bowl(73.42 * 2, 6.0, 0.8); j = int((DUR - 6.5) * SR); m = min(len(s), n - j)
+    L[j:j + m] += 0.25 * s[:m]; R[j:j + m] += 0.25 * s[:m]
+    fade = np.clip(tt / 1.5, 0, 1) * np.clip((DUR - tt) / 1.5, 0, 1)
+    st = np.stack([L, R], 1) * fade[:, None]
+    st = np.tanh(st * 1.4) / np.tanh(1.4)
+    return (st / (np.abs(st).max() + 1e-9) * 0.89 * 32767).astype(np.int16)
+
+# ---------------- driver ----------------
+def _chunk(args):
+    a, b, path = args
+    p = subprocess.Popen(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24',
+                          '-s', '%dx%d' % (W, H), '-r', str(FPS), '-i', '-', '-c:v', 'libx264',
+                          '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p', path], stdin=subprocess.PIPE)
+    for i in range(a, b):
+        p.stdin.write(frame(i / FPS).tobytes())
+    p.stdin.close(); p.wait()
+    return path
+
+def write_wav(path):
+    import wave
+    pcm = score()
+    with wave.open(path, 'wb') as w:
+        w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm.tobytes())
+
+if __name__ == '__main__':
+    mode = sys.argv[1] if len(sys.argv) > 1 else 'full'
+    if mode == 'stills':
+        for x in sys.argv[2].split(','):
+            Image.fromarray(frame(float(x))).save('still_%05.1f.png' % float(x))
+    elif mode == 'audio':
+        write_wav(sys.argv[2])
+    else:
+        from multiprocessing import Pool
+        out = sys.argv[2]; N = int(DUR * FPS); P = int(os.environ.get('PROCS', 4))
+        os.makedirs('frames', exist_ok=True)
+        cuts = np.linspace(0, N, P * 3 + 1).astype(int)
+        jobs = [(cuts[i], cuts[i + 1], 'frames/c%03d.mp4' % i) for i in range(len(cuts) - 1)]
+        with Pool(P) as pool:
+            pa = pool.apply_async(write_wav, ('score.wav',))
+            parts = pool.map(_chunk, jobs)
+            pa.get()
+        open('frames/list.txt', 'w').write(''.join("file '%s'\n" % os.path.basename(x) for x in parts))
+        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', 'frames/list.txt',
+                        '-i', 'score.wav', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-shortest',
+                        '-movflags', '+faststart', out], check=True)
+        print('wrote', out)
