@@ -159,22 +159,22 @@ def render(t):
     col = HUE * I[:, None] * np.array([255, 150, 70], np.float32)
     for k in range(3):
         np.add.at(glow[..., k], (CYI // 4, CXI // 4), col[:, k] * 0.9)
-    glow = gaussian_filter(glow, (1.6, 1.6, 0)) * 1.4 + gaussian_filter(glow, (8, 8, 0)) * 2.2
+    glow = gaussian_filter(glow, (1.6, 1.6, 0)) * 1.4 + gaussian_filter(glow, (8, 8, 0)) * 1.2
     big = np.stack([np.array(Image.fromarray(glow[..., k]).resize((W, H), Image.BILINEAR)) for k in range(3)], -1)
     sharp = np.zeros((H, W, 3), np.float32)
     np.add.at(sharp, (CYI, CXI), col * 0.9)
     sharp = np.maximum(sharp, np.roll(sharp, 1, 1) * 0.6)
     light = big + sharp
-    img = img + 235.0 * (1 - np.exp(-light / 150.0))
+    img = img + 235.0 * (1 - np.exp(-light / 200.0))
     out = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
     d = ImageDraw.Draw(out, 'RGBA')
     if tun > 0.01:
         for r in range(0, NROW, 7):
             x0, y0, _ = proj(0, r / (NROW - 1)); x1, _, _ = proj(1, r / (NROW - 1))
-            d.line([(x0, y0), (x1, y0)], fill=(150, 110, 70, int(30 * tun)), width=1)
+            d.line([(x0, y0), (x1, y0)], fill=(170, 125, 80, int(70 * tun)), width=1)
         for cc in range(0, NCOL, 6):
             a0 = proj(cc / (NCOL - 1), 0); a1 = proj(cc / (NCOL - 1), 1)
-            d.line([a0[:2], a1[:2]], fill=(150, 110, 70, int(22 * tun)), width=1)
+            d.line([a0[:2], a1[:2]], fill=(170, 125, 80, int(55 * tun)), width=1)
         for sx in SHAFTS:
             px = sx * W; gy = GY[int(px)]
             d.line([(px, gy), (px, YHZ)], fill=(210, 150, 80, int(120 * tun)), width=max(1, int(2 * S)))
@@ -184,9 +184,10 @@ def render(t):
         for i, (bx, bw, bh) in enumerate(BLD):
             x0 = int((bx - bw / 2) * W); x1 = int((bx + bw / 2) * W); gy = float(GY[int(bx * W)])
             hh = bh * S * (0.3 + 0.7 * pa)
-            d.rectangle([x0, gy - hh, x1, gy + 2], fill=(14, 15, 20, int(255 * pa)))
+            d.rectangle([x0, gy - hh, x1, gy + 2], fill=(34, 34, 42, int(255 * pa)))
+            d.line([(x0, gy - hh), (x1, gy - hh)], fill=(150, 130, 110, int(160 * pa)), width=max(1, int(S)))
             for (wx, wy, wp) in WIN[i * 20:(i + 1) * 20]:
-                if math.sin(wp * 40 + t * 0.7) > 0.2 - pa:
+                if math.sin(wp * 40 + t * 0.7) > 0.6 - 1.2 * pa:
                     px = x0 + 3 + wx * (x1 - x0 - 6); py = gy - hh + 4 + wy * (hh - 8)
                     d.rectangle([px, py, px + 2 * S, py + 2 * S], fill=(255, 200, 120, int(200 * pa)))
     # forest: only on exposed land
@@ -211,7 +212,7 @@ def frame(t):
         d.text((0.06 * W, 0.08 * H), year_text(E), font=FONT, fill=(230, 214, 190, int(220 * a)))
     da = fss(T0 - 3, T0, t) * (1 - fss(T_CLOSE + 2, T_CLOSE + 8, t))
     if da > 0.01:
-        d.text((0.06 * W, YREP - 8 * S), '-430 m', font=FONTS, fill=(200, 170, 130, int(150 * da)))
+        d.text((0.035 * W, YHZ - 22 * S), '430 m', font=FONTS, fill=(190, 160, 125, int(90 * da)))
     ta = fss(0.3, 2.0, t) * (1 - fss(3.6, 5.0, t))
     if ta > 0.01:
         tw = d.textlength('Safe to forget', font=FONTB)
